@@ -1,13 +1,16 @@
 # Core pipeline dependencies (as specified in the practical's study material).
 opencv-python==4.11.0.86
 numpy==1.26.4
-onnxruntime==1.30.0
+onnxruntime==1.23.2
 scipy==1.17.1
 tqdm==4.70.1
 mediapipe==0.10.21
+paho-mqtt==2.1.0
 
 # --- Notes on the exact pins above ---
 #
+# onnxruntime 1.23.2 provides a CPython 3.11 macOS x86_64 wheel; pip could not
+# resolve 1.30.0 for the Mac environment used for this working copy.
 # numpy<2 is required by mediapipe==0.10.21 (the pinned version still shipping the
 # legacy `mediapipe.solutions.face_mesh` API this project uses for 5-point landmarks).
 # opencv-python must therefore stay on the 4.x line (5.x hard-requires numpy>=2);
@@ -22,6 +25,6 @@ mediapipe==0.10.21
 # never calls a drawing function. See the README/instructions for the exact two-step
 # install that installs only what's actually needed:
 #
-#   pip install opencv-python==4.11.0.86 numpy==1.26.4 onnxruntime==1.30.0 scipy==1.17.1 tqdm==4.70.1
+#   pip install opencv-python==4.11.0.86 numpy==1.26.4 onnxruntime==1.23.2 scipy==1.17.1 tqdm==4.70.1 paho-mqtt==2.1.0
 #   pip install --no-deps mediapipe==0.10.21
 #   pip install "protobuf>=4.25.3,<5" attrs absl-py matplotlib flatbuffers packaging

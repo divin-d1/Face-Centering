@@ -1,0 +1,5 @@
+# Development example for a trusted, isolated LAN only.
+# Set MQTT_BROKER_HOST on the computer running the face app to this computer's
+# LAN address. Do not expose this anonymous listener to the public internet.
+listener 1883 0.0.0.0
+allow_anonymous true

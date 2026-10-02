@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ from tkinter import simpledialog
 from .camera_utils import add_camera_arg, open_camera
 from .embed import ArcFaceEmbedderONNX
 from .expressions import ExpressionTracker
+from .face_centering import FaceCenterController, MQTTMotorClient
 from .haar_5pt import Haar5ptDetector, align_face_5pt
 from .tracking import IdentityLock, IoUTracker
 
@@ -109,8 +111,25 @@ def main():
                         help="Run face detector every N camera frames (3 gives smoother CPU preview).")
     parser.add_argument("--recognize-interval", type=float, default=.30,
                         help="Seconds between ArcFace comparisons per tracked face.")
+    parser.add_argument("--mqtt-host", default=os.environ.get("MQTT_BROKER_HOST", "127.0.0.1"),
+                        help="Mosquitto broker host (default: 127.0.0.1; set MQTT_BROKER_HOST to override).")
+    parser.add_argument("--mqtt-port", type=int, default=1883)
+    parser.add_argument("--mqtt-topic", default="face-centering/motor/command")
+    parser.add_argument("--mqtt-status-topic", default="face-centering/motor/status")
+    parser.add_argument("--mqtt-client-id", default="face-centering-camera")
+    parser.add_argument("--motor-center-angle", type=float, default=90.0,
+                        help="Motor angle when the locked face is centered.")
+    parser.add_argument("--motor-min-angle", type=float, default=20.0)
+    parser.add_argument("--motor-max-angle", type=float, default=160.0)
+    parser.add_argument("--motor-direction", type=int, choices=(-1, 1), default=1,
+                        help="Use -1 if the motor turns away from the face with the default direction.")
+    parser.add_argument("--center-deadband", type=float, default=.04,
+                        help="Ignore horizontal face offsets inside this fraction of frame half-width.")
     parser.add_argument("--no-fullscreen", action="store_true")
     args = parser.parse_args()
+    model_path = Path(args.model).expanduser()
+    if not model_path.is_file():
+        parser.error(f"ArcFace model not found: {model_path}. See FACE_CENTERING.md for model setup.")
     cv2.setNumThreads(2)
 
     cap = open_camera(args.camera)
@@ -130,8 +149,16 @@ def main():
     display_width, display_height = (screen_width, screen_height) if not args.no_fullscreen else (
         min(screen_width, args.width), min(screen_height, args.height))
     detector = Haar5ptDetector(debug=False)
-    embedder = ArcFaceEmbedderONNX(model_path=args.model)
+    embedder = ArcFaceEmbedderONNX(model_path=str(model_path))
     processor = FrameProcessor(detector, embedder)
+    mqtt_motor = MQTTMotorClient(args.mqtt_host, args.mqtt_port, args.mqtt_topic,
+                                 args.mqtt_status_topic,
+                                 args.mqtt_client_id)
+    centering = FaceCenterController(
+        mqtt_motor, center_angle=args.motor_center_angle,
+        min_angle=args.motor_min_angle, max_angle=args.motor_max_angle,
+        direction=args.motor_direction, deadband=args.center_deadband,
+    )
     worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="face-inference")
     pending = None
     database_version = 0
@@ -191,6 +218,9 @@ def main():
                 elif action == "Lock":
                     if identity_lock.active:
                         identity_lock.unlock()
+                        centered_angle = centering.recenter()
+                        if centered_angle is not None:
+                            state["motor_angle"] = centered_angle
                         state["message"] = "Identity unlocked"
                     else:
                         selected = next((r for r in latest["records"]
@@ -296,6 +326,7 @@ def main():
                     expression_cache[track_id] = expression
                 nose_x, nose_y = map(float, face.kps[2])
                 dx, dy = nose_x - frame_width / 2, nose_y - frame_height / 2
+                face_center_dx = ((face.x1 + face.x2) / 2.0) - frame_width / 2
                 distance_from_center = float(np.hypot(dx, dy))
                 horizontal = "center" if abs(dx) < frame_width * .04 else ("right" if dx > 0 else "left")
                 vertical = "center" if abs(dy) < frame_height * .04 else ("down" if dy > 0 else "up")
@@ -315,6 +346,9 @@ def main():
                                 # Keep it in the UI-facing record as well as the worker cache.
                                 "vector": vector.copy(),
                                 "nose_direction": direction, "nose_dx": dx, "nose_dy": dy,
+                                "face_center_dx": face_center_dx,
+                                "face_center_x": (face.x1 + face.x2) / 2.0,
+                                "face_center_y": (face.y1 + face.y2) / 2.0,
                                 "nose_distance": distance_from_center})
 
             for stale_id in set(expression_trackers) - active_track_ids:
@@ -384,6 +418,31 @@ def main():
                         replacement["track_id"], replacement["name"]):
                     locked_record = replacement
             locked_face_visible = locked_record is not None and locked_record["name"] == identity_lock.name
+            motor_angle = None
+            if identity_lock.active and locked_face_visible and mqtt_motor.connected.is_set():
+                motor_angle = centering.update(
+                    locked_record["face_center_dx"], frame_width, locked_record["track_id"],
+                    locked_record["name"],
+                )
+            elif not identity_lock.active:
+                motor_angle = centering.flush_pending()
+            else:
+                motor_angle = None
+            state["motor_angle"] = motor_angle if motor_angle is not None else state.get("motor_angle")
+            if locked_face_visible:
+                center_x, center_y = frame_width // 2, frame_height // 2
+                center_band = max(1, int(frame_width * args.center_deadband / 2.0))
+                cv2.line(vis, (center_x - center_band, 72), (center_x - center_band, frame_height - 1),
+                         (70, 90, 70), 1)
+                cv2.line(vis, (center_x + center_band, 72), (center_x + center_band, frame_height - 1),
+                         (70, 90, 70), 1)
+                face_x = int(locked_record["face_center_x"])
+                face_y = int(locked_record["face_center_y"])
+                cv2.line(vis, (center_x, center_y), (face_x, face_y), (0, 220, 255), 2)
+                cv2.circle(vis, (face_x, face_y), 7, (0, 220, 255), -1)
+                cv2.putText(vis, f"LOCKED FACE OFFSET {locked_record['face_center_dx']:+.0f}px",
+                            (max(12, center_x - 170), 98), cv2.FONT_HERSHEY_SIMPLEX,
+                            .58, (0, 220, 255), 2)
             missing = not records or (identity_lock.active and not locked_face_visible)
             if missing:
                 if state["missing_since"] is None:
@@ -401,6 +460,15 @@ def main():
                         (16, 28), cv2.FONT_HERSHEY_SIMPLEX, .65, (240, 244, 250), 2)
             cv2.putText(vis, f"External camera: {args.camera}  |  Faces: {len(records)}  |  {state['message']}",
                         (16, 54), cv2.FONT_HERSHEY_SIMPLEX, .48, (190, 205, 220), 1)
+            broker_label = "MQTT connected" if mqtt_motor.connected.is_set() else (
+                mqtt_motor.last_error or "MQTT connecting")
+            if mqtt_motor.last_status:
+                broker_label += f" | {mqtt_motor.last_status}"
+            motor_label = (f"Motor: {state['motor_angle']:.0f}°" if state.get("motor_angle") is not None
+                           else "Motor: waiting for a locked face")
+            cv2.putText(vis, f"{broker_label}  |  {motor_label}",
+                        (width - 470, 28), cv2.FONT_HERSHEY_SIMPLEX, .48,
+                        (100, 230, 130) if mqtt_motor.connected.is_set() else (80, 170, 255), 1)
             if state["missing_since"] is not None and now - state["missing_since"] >= .5:
                 warning = (f"SEARCHING FOR LOCKED PERSON: {identity_lock.name}" if locked_record is None else
                            f"LOCKED PERSON NOT CONFIRMED: {identity_lock.name}") if identity_lock.active else "WARNING: NO FACE DETECTED"
@@ -440,6 +508,7 @@ def main():
         cv2.destroyAllWindows()
         detector.close()
         ui_root.destroy()
+        mqtt_motor.close()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,12 @@
 # Face-Locking
 
+## Face centering extension
+
+This working copy adds a motorized centering path over MQTT. Follow
+[`FACE_CENTERING.md`](FACE_CENTERING.md) for broker setup, camera app options,
+MQTT message format, and the ESP8266 firmware for the ULN2003 stepper setup.
+The original project remains outside this working copy and is unchanged.
+
 A CPU-first face recognition, tracking, and identity-lock demo using face
 detection, five-point alignment, ArcFace ONNX embeddings, interactive enrollment,
 and threshold-based recognition. Built for the *Face Recognition with ArcFace
@@ -77,6 +84,7 @@ onnxruntime
 scipy
 tqdm
 mediapipe==0.10.21
+paho-mqtt==2.1.0
 ```
 
 ### Why Python 3.11 (not whatever `python3` defaults to)
@@ -108,7 +116,7 @@ it directly instead.
 ## Environment Setup
 
 ```bash
-cd Face-Locking   # use the directory name you cloned the repository into
+# Run these commands from the `FaceLocking` working-copy directory.
 ~/.pyenv/versions/3.11.16/bin/python3.11 -m venv .venv   # or: python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -120,7 +128,7 @@ Verify the interpreter and key imports before continuing:
 
 ```bash
 python --version          # Python 3.11.x
-python -c "import cv2, numpy, onnxruntime, scipy, mediapipe; \
+python -c "import cv2, numpy, onnxruntime, scipy, mediapipe, paho.mqtt.client; \
            from mediapipe.solutions import face_mesh; print('all imports OK')"
 ```
 
