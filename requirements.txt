@@ -6,6 +6,7 @@ scipy==1.17.1
 tqdm==4.70.1
 mediapipe==0.10.21
 paho-mqtt==2.1.0
+pyobjc-core>=10.0; sys_platform == "darwin"
 
 # --- Notes on the exact pins above ---
 #

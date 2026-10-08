@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -20,6 +21,11 @@ from .expressions import ExpressionTracker
 from .face_centering import FaceCenterController, MQTTMotorClient
 from .haar_5pt import Haar5ptDetector, align_face_5pt
 from .tracking import IdentityLock, IoUTracker
+
+if sys.platform == "darwin":
+    from objc import autorelease_pool
+else:
+    autorelease_pool = None
 
 DB_NPZ = Path("data/db/face_db.npz")
 DB_JSON = Path("data/db/face_db.json")
@@ -122,7 +128,7 @@ def main():
     parser.add_argument("--motor-min-angle", type=float, default=20.0)
     parser.add_argument("--motor-max-angle", type=float, default=160.0)
     parser.add_argument("--motor-direction", type=int, choices=(-1, 1), default=1,
-                        help="Use -1 if the motor turns away from the face with the default direction.")
+                        help="Use -1 if the motor turns opposite to the face motion.")
     parser.add_argument("--center-deadband", type=float, default=.04,
                         help="Ignore horizontal face offsets inside this fraction of frame half-width.")
     parser.add_argument("--no-fullscreen", action="store_true")
@@ -151,6 +157,15 @@ def main():
     detector = Haar5ptDetector(debug=False)
     embedder = ArcFaceEmbedderONNX(model_path=str(model_path))
     processor = FrameProcessor(detector, embedder)
+
+    def process_frame(*args):
+        # MediaPipe's macOS native runtime uses Objective-C objects. Each
+        # executor task needs its own autorelease pool or macOS may abort.
+        if autorelease_pool is None:
+            return processor.process(*args)
+        with autorelease_pool():
+            return processor.process(*args)
+
     mqtt_motor = MQTTMotorClient(args.mqtt_host, args.mqtt_port, args.mqtt_topic,
                                  args.mqtt_status_topic,
                                  args.mqtt_client_id)
@@ -192,19 +207,10 @@ def main():
             if x1 <= x <= x2 and y1 <= y <= y2:
                 action = BUTTONS[i]
                 if action == "Enroll":
-                    if not args.no_fullscreen:
-                        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-                    ui_root.attributes("-topmost", True)
-                    name = simpledialog.askstring("Enroll a face", "Enter the person's name:", parent=ui_root)
-                    ui_root.attributes("-topmost", False)
-                    if not args.no_fullscreen:
-                        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-                    if name and name.strip():
-                        state.update(enrolling=True, name=name.strip(), samples=[], crops=[], auto=False,
-                                     selected=None,
-                                     message=f"Enrolling {name.strip()}: capture at least 5 samples")
-                    else:
-                        state["message"] = "Enrollment cancelled"
+                    # Defer the native Tk dialog until the OpenCV mouse
+                    # callback returns; nested GUI event loops can freeze the
+                    # camera window on macOS.
+                    state["name_prompt_requested"] = True
                 elif action == "Capture":
                     state["capture_requested"] = True
                 elif action.startswith("Auto") and state["enrolling"]:
@@ -230,6 +236,7 @@ def main():
                             selected = recognized[0]
                             state["selected"] = selected["track_id"]
                         if selected and selected["name"]:
+                            centering.start_tracking(selected["face_center_dx"])
                             identity_lock.lock(selected["track_id"], selected["name"])
                             state["message"] = f"LOCKED: {selected['name']} (track {selected['track_id']})"
                         elif len(recognized) > 1:
@@ -268,10 +275,32 @@ def main():
             elif key == ord("-"):
                 threshold = max(.05, threshold - .01)
 
+            if state.pop("name_prompt_requested", False):
+                if not args.no_fullscreen:
+                    cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                ui_root.attributes("-topmost", True)
+                try:
+                    name = simpledialog.askstring(
+                        "Enroll a face", "Enter the person's name:", parent=ui_root
+                    )
+                finally:
+                    ui_root.attributes("-topmost", False)
+                    if not args.no_fullscreen:
+                        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                if name and name.strip():
+                    state.update(enrolling=True, name=name.strip(), samples=[], crops=[], auto=False,
+                                 selected=None,
+                                 message=f"Enrolling {name.strip()}: capture at least 5 samples")
+                else:
+                    state["message"] = "Enrollment cancelled"
+
             ok, frame = cap.read()
             if not ok:
                 state["message"] = "Camera frame unavailable"
                 break
+            # Mirror left/right only: this corrects the camera's horizontal
+            # orientation while keeping faces upright for detection and display.
+            frame = cv2.flip(frame, 1)
             frame_height, frame_width = frame.shape[:2]
             height, width = frame_height, frame_width
             vis = frame.copy()
@@ -285,7 +314,7 @@ def main():
                     state["message"] = f"Vision pipeline error: {exc}"
                 pending = None
             if pending is None and frame_number % detect_every == 0:
-                pending = worker.submit(processor.process, frame.copy(), matrix, tuple(names),
+                pending = worker.submit(process_frame, frame.copy(), matrix, tuple(names),
                                         database_version, args.recognize_interval)
             frame_number += 1
             records = []
@@ -405,6 +434,7 @@ def main():
                         cv2.imwrite(str(person_dir / f"{int(now * 1000)}_{index:03d}.jpg"), crop)
                     db, names, matrix = load_db()
                     identity_count = len(db)
+                    database_version += 1
                     state.update(enrolling=False, name="", samples=[], crops=[], auto=False,
                                  message=f"Saved {name}; database has {len(names)} identities")
 

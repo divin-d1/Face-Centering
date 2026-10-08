@@ -7,6 +7,9 @@ models/*.onnx
 buffalo_l.zip
 *.onnx
 
+# Local Wi-Fi and broker credentials for the ESP8266 sketch
+firmware/face_center_stepper/secrets.h
+
 # Personal biometric data: aligned enrollment crops and the enrollment DB
 # (embeddings + face images of real people must never be committed)
 data/enroll/*

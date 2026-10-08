@@ -123,6 +123,7 @@ MQTT mapping before the stepper is connected.
 
 Open `firmware/face_center_stepper/face_center_stepper.ino` in Arduino IDE.
 Install the ESP8266 board support package plus **PubSubClient**, **ArduinoJson**,
-and **AccelStepper**. Set Wi-Fi, broker, motor-pin, and steps-per-revolution
-values; manually center the shaft, then flash the board. Connect four GPIOs to
-the ULN2003 `IN1` through `IN4` inputs.
+and **AccelStepper**. Copy `secrets.h.example` to `secrets.h` and put the Wi-Fi
+and broker values in `secrets.h`; that local file is ignored by Git. Set the
+motor-pin and steps-per-revolution values, manually center the shaft, then flash
+the board. Connect four GPIOs to the ULN2003 `IN1` through `IN4` inputs.

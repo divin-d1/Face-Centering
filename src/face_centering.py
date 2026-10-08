@@ -102,10 +102,18 @@ class FaceCenterController:
         self.publish_interval = publish_interval
         self.smoothing = smoothing
         self._filtered_error: Optional[float] = None
+        self._tracking_origin_dx = 0.0
         self._last_publish = 0.0
         self._last_angle: Optional[float] = None
         self._connection_count = motor.connection_count
         self._pending_angle: Optional[float] = None
+
+    def start_tracking(self, face_offset_px: float) -> None:
+        """Use the locked face's current position as the pointer's center."""
+        self._tracking_origin_dx = float(face_offset_px)
+        self._filtered_error = None
+        self._last_angle = None
+        self._last_publish = 0.0
 
     def update(self, dx: float, frame_width: int, track_id: int,
                face_name: str) -> Optional[float]:
@@ -119,7 +127,8 @@ class FaceCenterController:
             self._last_publish = 0.0
         # A live face target supersedes a queued recenter request.
         self._pending_angle = None
-        error = max(-1.0, min(1.0, float(dx) / (frame_width / 2.0)))
+        relative_dx = float(dx) - self._tracking_origin_dx
+        error = max(-1.0, min(1.0, relative_dx / (frame_width / 2.0)))
         self._filtered_error = (error if self._filtered_error is None else
                                 self.smoothing * error + (1.0 - self.smoothing) * self._filtered_error)
         filtered_error = self._filtered_error
@@ -152,6 +161,7 @@ class FaceCenterController:
     def recenter(self) -> Optional[float]:
         """Return the motor to its calibrated center angle after unlocking."""
         self._filtered_error = None
+        self._tracking_origin_dx = 0.0
         self._pending_angle = self.center_angle
         return self.flush_pending()
 

@@ -34,8 +34,6 @@ def open_camera(camera: str) -> cv2.VideoCapture:
     src = camera
     if isinstance(src, str) and src.lstrip("-").isdigit():
         src = int(src)
-    if isinstance(src, str):
-        cap = cv2.VideoCapture(src, cv2.CAP_V4L2)
-    else:
-        cap = cv2.VideoCapture(src)
-    return cap
+    # Let OpenCV choose the native backend (AVFoundation on macOS, V4L2 on
+    # Linux). Forcing CAP_V4L2 prevents the project's camera from opening on Mac.
+    return cv2.VideoCapture(src)

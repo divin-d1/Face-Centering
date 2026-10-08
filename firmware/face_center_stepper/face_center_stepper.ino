@@ -11,22 +11,21 @@
 #include <ArduinoJson.h>
 #include <AccelStepper.h>
 #include <math.h>
+#include "secrets.h"
 
-const char *WIFI_SSID = "YOUR_WIFI_NAME";
-const char *WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char *MQTT_HOST = "192.168.1.10";  // Computer running Mosquitto
+const char *WIFI_SSID = "champ";
+const char *WIFI_PASSWORD = "Goddidit";
+const char *MQTT_HOST = "192.168.1.146";  // Computer running Mosquitto
 const uint16_t MQTT_PORT = 1883;
 const char *COMMAND_TOPIC = "face-centering/motor/command";
 const char *STATUS_TOPIC = "face-centering/motor/status";
 const char *OFFLINE_STATUS = "{\"status\":\"offline\"}";
 
-// Raw ESP8266MOD GPIOs; starts with the reported RX and D1 pins and adds two
-// required ULN2003 signals. RX (GPIO3) is used as a regular output, not UART.
-// Change these assignments to match actual ULN2003 IN1..IN4 wiring.
-const uint8_t IN1_PIN = 3;   // GPIO3 / RX
-const uint8_t IN2_PIN = 5;   // GPIO5 / D1
-const uint8_t IN3_PIN = 12;  // GPIO12 / D6
-const uint8_t IN4_PIN = 14;  // GPIO14 / D5 (fourth control signal)
+// ESP8266 board-label wiring reported for the ULN2003 inputs.
+const uint8_t IN1_PIN = 5;   // D1 / GPIO5
+const uint8_t IN2_PIN = 4;   // D2 / GPIO4
+const uint8_t IN3_PIN = 14;  // D5 / GPIO14
+const uint8_t IN4_PIN = 12;  // D6 / GPIO12
 
 // Calibrate for the actual motor/gearbox. 4096 is a common half-step estimate
 // for a 28BYJ-48, but variants differ and should be measured on the hardware.
@@ -66,7 +65,7 @@ void publishStatus(const char *status) {
   const size_t length = serializeJson(message, payload, sizeof(payload));
   // Retained status lets the camera app see the latest ESP8266 state even if
   // it connects after the device. The MQTT last-will replaces it on disconnect.
-  mqtt.publish(STATUS_TOPIC, payload, length, true);
+  mqtt.publish(STATUS_TOPIC, reinterpret_cast<const uint8_t *>(payload), length, true);
 }
 
 void onMessage(char *topic, byte *payload, unsigned int length) {
