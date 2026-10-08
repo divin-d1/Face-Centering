@@ -13,9 +13,9 @@
 #include <math.h>
 #include "secrets.h"
 
-const char *WIFI_SSID = "champ";
-const char *WIFI_PASSWORD = "Goddidit";
-const char *MQTT_HOST = "192.168.1.146";  // Computer running Mosquitto
+const char *WIFI_SSID = "<YOUR_WIFI_SSID";
+const char *WIFI_PASSWORD = "<YOUR_WIFI_PASSWORD>";
+const char *MQTT_HOST = "YOUR_PC_IP";  // Computer running Mosquitto
 const uint16_t MQTT_PORT = 1883;
 const char *COMMAND_TOPIC = "face-centering/motor/command";
 const char *STATUS_TOPIC = "face-centering/motor/status";
